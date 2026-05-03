@@ -144,28 +144,7 @@ Keep changes readable and reviewable:
 - Add or update tests for behavior changes, especially money movement, authentication, idempotency, and webhook processing.
 - Run Pint, PHPStan, and PHPUnit before committing.
 
-## Commit Workflow
 
-Use Conventional Commits and stage only the files that belong to the current change:
-
-```bash
-git add README.md
-git commit -m "docs: refresh project readme"
-
-git add composer.json composer.lock phpstan.neon
-git commit -m "chore: add static analysis tooling"
-```
-
-Common commit types for this project:
-
-- `feat:` user-facing behavior or API additions
-- `fix:` bug fixes
-- `test:` test-only changes
-- `docs:` README, API notes, or reviewer guidance
-- `chore:` tooling, dependency, or maintenance updates
-- `refactor:` internal code changes with no behavior change
-
-When a change touches unrelated areas, split it into separate commits. Each commit should be easy to review, easy to revert, and named after the value it delivers.
 
 ## Environment Notes
 
