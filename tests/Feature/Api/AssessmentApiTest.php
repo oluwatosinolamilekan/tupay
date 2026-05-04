@@ -37,9 +37,11 @@ class AssessmentApiTest extends TestCase
             'password' => 'password',
         ])
             ->assertOk()
-            ->assertJsonPath('auth_type', 'Password')
+            ->assertJsonPath('auth_type', 'Bearer')
             ->assertJsonPath('two_factor.setup_required', true)
             ->assertJsonStructure([
+                'access_token',
+                'token_type',
                 'two_factor' => [
                     'session_token',
                     'secret',
@@ -48,6 +50,7 @@ class AssessmentApiTest extends TestCase
             ]);
 
         $sessionToken = $loginResponse->json('two_factor.session_token');
+        $accessToken = $loginResponse->json('access_token');
 
         $payload = [
             'source_account_id' => $ngn->id,
@@ -56,13 +59,13 @@ class AssessmentApiTest extends TestCase
             'idempotency_key' => 'swap-123',
         ];
 
-        $this->withBasicAuth($user->email, 'password')->postJson('/api/swap', $payload)
+        $this->withToken($accessToken)->postJson('/api/swap', $payload)
             ->assertForbidden()
             ->assertJsonPath('message', 'Two-factor verification required.');
 
         $code = app(TwoFactorService::class)->totp($user->refresh()->two_factor_secret);
 
-        $this->withBasicAuth($user->email, 'password')->postJson('/api/2fa/verify', [
+        $this->withToken($accessToken)->postJson('/api/2fa/verify', [
             'code' => $code,
             'session_token' => $sessionToken,
         ])
@@ -70,19 +73,19 @@ class AssessmentApiTest extends TestCase
 
         $this->assertNotNull($user->refresh()->two_factor_confirmed_at);
 
-        $this->withBasicAuth($user->email, 'password')->postJson('/api/swap', $payload)
+        $this->withToken($accessToken)->postJson('/api/swap', $payload)
             ->assertForbidden()
             ->assertJsonPath('message', 'Two-factor verification required.');
 
         $this->withHeader('X-Two-Factor-Session', $sessionToken)
-            ->withBasicAuth($user->email, 'password')
+            ->withToken($accessToken)
             ->postJson('/api/swap', $payload)
             ->assertCreated()
             ->assertJsonPath('data.debit.balance_after_minor', 50_000)
             ->assertJsonPath('data.credit.amount_minor', 25);
 
         $this->withHeader('X-Two-Factor-Session', $sessionToken)
-            ->withBasicAuth($user->email, 'password')
+            ->withToken($accessToken)
             ->postJson('/api/swap', $payload)
             ->assertOk()
             ->assertJsonPath('data.credit.amount_minor', 25);

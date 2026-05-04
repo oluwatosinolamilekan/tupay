@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Account;
+use App\Models\LedgerTransaction;
 use App\Models\User;
 use App\Services\TwoFactorService;
 use Database\Seeders\TestUserSeeder;
@@ -23,6 +24,10 @@ class TestUserSeederTest extends TestCase
             ->whereBelongsTo($user)
             ->where('currency', 'NGN')
             ->firstOrFail();
+        $cnyAccount = Account::query()
+            ->whereBelongsTo($user)
+            ->where('currency', 'CNY')
+            ->firstOrFail();
 
         $this->assertSame('Test User', $user->name);
         $this->assertTrue(Hash::check('password', $user->password));
@@ -33,5 +38,13 @@ class TestUserSeederTest extends TestCase
             app(TwoFactorService::class)->totp($user->two_factor_secret),
         ));
         $this->assertSame(100_000, $account->balance_minor);
+        $this->assertSame(0, $cnyAccount->balance_minor);
+        $this->assertSame(100_000, LedgerTransaction::query()->where('account_id', $account->id)->sum('amount_minor'));
+        $this->assertDatabaseHas('exchange_rates', [
+            'base_currency' => 'NGN',
+            'quote_currency' => 'CNY',
+            'rate_micro' => 500,
+            'is_active' => true,
+        ]);
     }
 }
