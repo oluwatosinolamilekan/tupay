@@ -4,6 +4,7 @@ namespace App\Actions;
 
 use App\Models\Account;
 use App\Models\LedgerTransaction;
+use App\Models\User;
 use App\Services\WalletService;
 
 class TransferAction
@@ -13,10 +14,12 @@ class TransferAction
     /**
      * @return array{debit: LedgerTransaction, credit: LedgerTransaction}
      */
-    public function execute(int $sourceAccountId, int $destinationAccountId, int $amountMinor, string $idempotencyKey, array $metadata = []): array
+    public function execute(User $user, int $sourceAccountId, int $destinationAccountId, int $amountMinor, string $idempotencyKey, array $metadata = []): array
     {
         /** @var Account $source */
-        $source = Account::query()->findOrFail($sourceAccountId);
+        $source = Account::query()
+            ->where('user_id', $user->id)
+            ->findOrFail($sourceAccountId);
         /** @var Account $destination */
         $destination = Account::query()->findOrFail($destinationAccountId);
 

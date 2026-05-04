@@ -15,14 +15,13 @@ class CreateAccountRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_id' => ['required', 'integer', 'exists:users,id'],
             'currency' => [
                 'required',
                 'string',
                 'in:NGN,CNY',
                 function (string $attribute, mixed $value, callable $fail): void {
                     $account = Account::query()
-                        ->where('user_id', $this->integer('user_id'))
+                        ->where('user_id', $this->user()?->id)
                         ->where('currency', $value)
                         ->first();
 

@@ -14,7 +14,7 @@ class AccountController extends Controller
     public function store(CreateAccountRequest $request, CreateAccountAction $createAccount): JsonResponse
     {
         $account = $createAccount->execute(
-            userId: $request->integer('user_id'),
+            user: $request->user(),
             currency: $request->string('currency')->toString(),
         );
 
@@ -25,6 +25,8 @@ class AccountController extends Controller
 
     public function show(Account $account): JsonResponse
     {
+        abort_unless($account->user_id === request()->user()?->id, 404);
+
         return (new AccountResource($account))->response();
     }
 }

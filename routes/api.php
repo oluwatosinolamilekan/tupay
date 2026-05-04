@@ -13,11 +13,14 @@ Route::middleware('throttle:auth')->group(function (): void {
     Route::post('/login', [AuthController::class, 'login']);
 });
 
-Route::middleware(['password.auth', 'throttle:auth'])->group(function (): void {
+Route::middleware(['auth:sanctum', 'throttle:auth'])->group(function (): void {
     Route::post('/2fa/verify', [AuthController::class, 'verify']);
 });
 
-Route::middleware(['password.auth', '2fa', 'throttle:finance'])->group(function (): void {
+Route::middleware(['auth:sanctum', '2fa', 'throttle:finance'])->group(function (): void {
+    Route::post('/accounts', [AccountController::class, 'store']);
+    Route::get('/accounts/{account}', [AccountController::class, 'show']);
+    Route::post('/accounts/{account}/deposits', [DepositController::class, 'store']);
     Route::post('/swap', [SwapController::class, 'store']);
     Route::post('/transfer', [TransactionController::class, 'store']);
     Route::get('/ledger/{wallet}', [LedgerController::class, 'index']);
@@ -25,8 +28,3 @@ Route::middleware(['password.auth', '2fa', 'throttle:finance'])->group(function 
 
 Route::post('/webhooks/settlement', [SettlementWebhookController::class, 'store'])
     ->middleware(['webhook.signature', 'throttle:webhooks']);
-
-Route::post('/accounts', [AccountController::class, 'store']);
-Route::get('/accounts/{account}', [AccountController::class, 'show']);
-Route::post('/accounts/{account}/deposits', [DepositController::class, 'store']);
-Route::post('/transfers', [TransactionController::class, 'store']);

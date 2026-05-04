@@ -13,6 +13,8 @@ class DepositController extends Controller
 {
     public function store(DepositRequest $request, Account $account, DepositAction $deposit): JsonResponse
     {
+        abort_unless($account->user_id === $request->user()?->id, 404);
+
         $transaction = $deposit->execute(
             account: $account,
             amountMinor: $request->integer('amount_minor'),

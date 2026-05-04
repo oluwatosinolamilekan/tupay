@@ -10,11 +10,8 @@ class CreateAccountAction
 {
     public function __construct(private readonly WalletService $wallets) {}
 
-    public function execute(int $userId, string $currency): Account
+    public function execute(User $user, string $currency): Account
     {
-        /** @var User $user */
-        $user = User::query()->findOrFail($userId);
-
         return $this->wallets->createAccount($user, $currency);
     }
 }

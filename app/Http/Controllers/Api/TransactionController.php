@@ -15,11 +15,15 @@ class TransactionController extends Controller
     {
         try {
             $transactions = $transfer->execute(
+                user: $request->user(),
                 sourceAccountId: $request->integer('source_account_id'),
                 destinationAccountId: $request->integer('destination_account_id'),
                 amountMinor: $request->integer('amount_minor'),
                 idempotencyKey: $request->string('idempotency_key')->toString(),
-                metadata: $request->array('metadata'),
+                metadata: array_merge($request->array('metadata'), [
+                    'ip_address' => $request->ip(),
+                    'device_id' => $request->header('X-Device-Id'),
+                ]),
             );
         } catch (DomainException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
