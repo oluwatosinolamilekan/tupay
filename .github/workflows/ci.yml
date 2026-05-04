@@ -37,6 +37,12 @@ jobs:
         run: |
           cp .env.example .env
           php artisan key:generate --ansi
+          mkdir -p storage/framework/cache/data
+          mkdir -p storage/framework/sessions
+          mkdir -p storage/framework/testing
+          mkdir -p storage/framework/views
+          mkdir -p bootstrap/cache
+          chmod -R 775 storage bootstrap/cache
 
       - name: Run quality gate
         run: composer quality
