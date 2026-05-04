@@ -86,6 +86,58 @@ it('invalid signature returns 401', function (): void {
     expect(SettlementWebhook::query()->count())->toBe(0);
 });
 
+it('webhook with conflicting payload for existing reference returns 409', function (): void {
+    Queue::fake();
+    $account = Account::factory()->create(['currency' => 'CNY', 'balance_minor' => 0]);
+    $otherAccount = Account::factory()->create(['currency' => 'CNY', 'balance_minor' => 0]);
+    [$payload, $body, $signature] = settlementWebhookSignedPayload($account, 'provider-rmb-conflict');
+    $server = [
+        'CONTENT_TYPE' => 'application/json',
+        'HTTP_ACCEPT' => 'application/json',
+        'HTTP_X_TUPAY_SIGNATURE' => $signature,
+    ];
+
+    call('POST', '/api/webhooks/settlement', [], [], [], $server, $body)
+        ->assertAccepted();
+
+    $conflictingPayload = array_merge($payload, ['account_id' => $otherAccount->id]);
+    $conflictingBody = json_encode($conflictingPayload, JSON_THROW_ON_ERROR);
+
+    call('POST', '/api/webhooks/settlement', [], [], [], [
+        'CONTENT_TYPE' => 'application/json',
+        'HTTP_ACCEPT' => 'application/json',
+        'HTTP_X_TUPAY_SIGNATURE' => hash_hmac('sha256', $conflictingBody, config('services.settlement.secret')),
+    ], $conflictingBody)
+        ->assertStatus(409)
+        ->assertJsonPath('message', 'Provider reference was already accepted with a different payload.');
+});
+
+it('processed webhook credits the correct CNY account via job', function (): void {
+    Notification::fake();
+    $account = Account::factory()->create(['currency' => 'CNY', 'balance_minor' => 0]);
+    [$payload, $body, $signature] = settlementWebhookSignedPayload($account, 'provider-rmb-process');
+
+    call('POST', '/api/webhooks/settlement', [], [], [], [
+        'CONTENT_TYPE' => 'application/json',
+        'HTTP_ACCEPT' => 'application/json',
+        'HTTP_X_TUPAY_SIGNATURE' => $signature,
+    ], $body)
+        ->assertAccepted();
+
+    $webhook = SettlementWebhook::query()
+        ->where('provider_reference', $payload['provider_reference'])
+        ->firstOrFail();
+
+    (new ProcessSettlementWebhook($webhook->id))->handle(app(WalletService::class));
+
+    expect($account->refresh()->balance_minor)->toBe(12_500)
+        ->and(LedgerTransaction::query()
+            ->where('account_id', $account->id)
+            ->where('idempotency_key', 'settlement:provider-rmb-process')
+            ->where('amount_minor', 12_500)
+            ->exists())->toBeTrue();
+});
+
 /**
  * @return array{0: array<string, mixed>, 1: string, 2: string}
  */

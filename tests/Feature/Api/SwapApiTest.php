@@ -31,6 +31,27 @@ it('swap debits NGN and credits CNY correctly', function (): void {
         ->and($cny->refresh()->balance_minor)->toBe(25);
 });
 
+it('swap records rate_micro in metadata on both ledger entries', function (): void {
+    [$user, $ngn, $cny, $headers] = swapApiFixture();
+
+    postJson('/api/swap', [
+        'source_account_id' => $ngn->id,
+        'destination_account_id' => $cny->id,
+        'amount_minor' => 50_000,
+        'idempotency_key' => 'swap-rate-metadata',
+    ], $headers)
+        ->assertCreated()
+        ->assertJsonPath('data.debit.metadata.rate_micro', 500)
+        ->assertJsonPath('data.credit.metadata.rate_micro', 500);
+
+    $transactions = LedgerTransaction::query()
+        ->where('idempotency_key', 'swap-rate-metadata')
+        ->get();
+
+    expect($transactions)->toHaveCount(2)
+        ->and($transactions->every(fn (LedgerTransaction $transaction): bool => $transaction->metadata['rate_micro'] === 500))->toBeTrue();
+});
+
 it('swap with insufficient funds returns 422', function (): void {
     [$user, $ngn, $cny, $headers] = swapApiFixture(ngnBalance: 10_000);
 
@@ -85,6 +106,42 @@ it('swap wrong direction CNY to NGN returns 422', function (): void {
 
     expect($ngn->refresh()->balance_minor)->toBe(100_000)
         ->and($cny->refresh()->balance_minor)->toBe(100);
+});
+
+it('concurrent swap returns 423 when lock is held', function (): void {
+    [$user, $ngn, $cny, $headers] = swapApiFixture();
+    $lock = Cache::lock("swap:user:{$user->id}", 10);
+
+    expect($lock->get())->toBeTrue();
+
+    try {
+        postJson('/api/swap', [
+            'source_account_id' => $ngn->id,
+            'destination_account_id' => $cny->id,
+            'amount_minor' => 50_000,
+            'idempotency_key' => 'swap-lock-held',
+        ], $headers)
+            ->assertStatus(423)
+            ->assertJsonPath('message', 'Another swap is already in progress.');
+    } finally {
+        $lock->release();
+    }
+});
+
+it('swap amount too small for rate returns 422', function (): void {
+    [$user, $ngn, $cny, $headers] = swapApiFixture();
+
+    postJson('/api/swap', [
+        'source_account_id' => $ngn->id,
+        'destination_account_id' => $cny->id,
+        'amount_minor' => 1,
+        'idempotency_key' => 'swap-too-small',
+    ], $headers)
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Swap amount is too small for the configured exchange rate.');
+
+    expect($ngn->refresh()->balance_minor)->toBe(100_000)
+        ->and($cny->refresh()->balance_minor)->toBe(0);
 });
 
 /**
