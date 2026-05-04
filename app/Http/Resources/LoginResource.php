@@ -24,8 +24,10 @@ class LoginResource extends JsonResource
         }
 
         return [
-            'auth_type' => 'Password',
+            'auth_type' => 'Bearer',
             'email' => $this->resource['email'],
+            'access_token' => $this->resource['access_token'],
+            'token_type' => $this->resource['token_type'],
             'two_factor' => $twoFactor,
         ];
     }

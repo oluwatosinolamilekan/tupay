@@ -15,7 +15,7 @@ class AuthenticateUserAction
     ) {}
 
     /**
-     * @return array{email: string, two_factor_session_token: string, two_factor_setup_required: bool, two_factor_secret: string|null, provisioning_uri: string|null}|null
+     * @return array{email: string, access_token: string, token_type: string, two_factor_session_token: string, two_factor_setup_required: bool, two_factor_secret: string|null, provisioning_uri: string|null}|null
      */
     public function execute(string $email, string $password, string $deviceName = 'api'): ?array
     {
@@ -38,6 +38,8 @@ class AuthenticateUserAction
 
         return [
             'email' => $user->email,
+            'access_token' => $user->createToken($deviceName, ['dashboard:view', 'finance:write'])->plainTextToken,
+            'token_type' => 'Bearer',
             'two_factor_session_token' => $sessionToken,
             'two_factor_setup_required' => $isNewSecret,
             'two_factor_secret' => $isNewSecret ? $secret : null,
