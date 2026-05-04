@@ -1,21 +1,22 @@
 # Tupay
 
-Tupay is a Laravel 12 ledger and settlement API for NGN/CNY wallet operations. It focuses on integer-safe money movement, auditable ledger entries, TOTP-gated financial actions, atomic currency swaps, and idempotent settlement webhooks.
+Tupay is a Laravel ledger and settlement API for NGN/CNY wallet operations. It focuses on integer-safe money movement, auditable ledger entries, Sanctum bearer-token authentication, TOTP-gated financial actions, atomic currency swaps, and idempotent settlement webhooks.
 
 ## Highlights
 
 - Multi-currency wallets backed by integer minor-unit balances.
 - Immutable ledger rows for deposits, transfers, swaps, and settlement credits.
-- Password plus TOTP verification for financial actions.
+- Laravel Sanctum bearer tokens plus TOTP verification for financial actions.
 - HMAC-SHA256 settlement webhook verification.
-- Database transactions, row-level locks, and idempotency keys for safe retries.
+- Database transactions, row-level locks, Redis atomic locks, and idempotency keys for safe retries.
 - Laravel Pint and Larastan/PHPStan quality gates.
 
 ## Stack
 
 - PHP 8.2
-- Laravel 12
-- SQLite for local development and tests
+- Laravel 11
+- SQLite for tests and local development; MySQL/PostgreSQL-ready migrations
+- Redis for production cache, locks, and queues
 - PHPUnit 11
 - Laravel Pint
 - Larastan / PHPStan
@@ -56,7 +57,6 @@ Prepare the local database:
 ```bash
 touch database/database.sqlite
 php artisan migrate:fresh --seed
-php artisan db:seed --class=TestUserSeeder
 ```
 
 Start the API:
@@ -74,15 +74,67 @@ php artisan queue:work
 ## API Surface
 
 ```http
-POST /api/login
-POST /api/2fa/verify
-POST /api/swap
-POST /api/transfer
-POST /api/webhooks/settlement
-GET  /api/ledger/{wallet_id}
+POST /api/login                 # rate-limited, returns Sanctum bearer token
+POST /api/2fa/verify            # bearer token required, rate-limited
+POST /api/swap                  # bearer token + verified TOTP session required
+POST /api/transfer              # bearer token + verified TOTP session required
+POST /api/webhooks/settlement   # HMAC signature required
+GET  /api/ledger/{wallet_id}    # bearer token + verified TOTP session required
 ```
 
-Assessment helper routes for account creation, deposits, and same-currency transfers remain available for local testing.
+Assessment helper routes for account creation and deposits are also protected by bearer token, TOTP, and finance rate limits.
+
+## Architecture
+
+Controllers stay thin and delegate business rules into action and service classes:
+
+- `app/Actions` contains use cases such as `AuthenticateUserAction`, `SwapAction`, `TransferAction`, and settlement webhook intake/processing.
+- `app/Services/WalletService.php` owns balance mutation, ledger entry creation, idempotency checks, and integer-safe rate conversion.
+- `app/Services/ExchangeRateService.php` hides cached exchange-rate lookup.
+- `app/Services/TwoFactorService.php` implements RFC-style TOTP generation and verification without floats.
+- `app/Http/Middleware` contains the high-value action gate and webhook signature verification.
+- `app/Jobs/ProcessSettlementWebhook.php` performs asynchronous settlement crediting and notification.
+
+The database separates current balances (`accounts.balance_minor`) from immutable audit history (`ledger_transactions`). A balance can be checked by summing completed credit/debit ledger rows for the wallet, and every mutation stores `balance_before_minor`, `balance_after_minor`, `idempotency_key`, and JSON `metadata`.
+
+## Concurrency Strategy
+
+Swaps are protected at three layers:
+
+- `SwapAction` takes a per-user `Cache::lock("swap:user:{id}")`, backed by Redis in production, so the same user cannot run overlapping swaps.
+- `WalletService` wraps swaps/transfers/credits in `DB::transaction()`.
+- Source and destination accounts are selected in stable ID order with `lockForUpdate()`, preventing lost updates and reducing deadlock risk.
+
+Idempotency keys are unique per ledger direction, so retrying the same swap or transfer returns the existing debit/credit pair instead of mutating balances again.
+
+## Security Measures
+
+`POST /api/login` validates credentials and issues a Laravel Sanctum bearer token. Dashboard-style reads can use the token, but financial routes also require a verified TOTP session via `X-Two-Factor-Session`.
+
+The 2FA flow is intentionally short-lived:
+
+- Login creates a random pending 2FA session token for 10 minutes.
+- `POST /api/2fa/verify` requires `Authorization: Bearer <token>` and a valid six-digit TOTP code.
+- Successful verification moves the session into a verified cache key for 10 minutes.
+
+Auth, finance, and webhook endpoints use named Laravel rate limiters. Webhooks are protected with `X-Tupay-Signature`, an HMAC-SHA256 of the exact raw request body using `SETTLEMENT_WEBHOOK_SECRET`.
+
+## Performance Optimization
+
+Exchange rates are read through `ExchangeRateService`, which caches the active NGN/CNY `rate_micro` for 30 seconds. This avoids repeated database reads during swap bursts while keeping rates fresh.
+
+Production should set:
+
+```env
+CACHE_STORE=redis
+QUEUE_CONNECTION=redis
+```
+
+That makes both exchange-rate caching and per-user swap locks shared across app servers. Local tests still run without Redis by using Laravel's test database/cache environment.
+
+## Settlement Webhook Assumptions
+
+The mock partner sends `provider_reference`, `account_id`, `amount_minor`, `currency`, and `status`. Only completed CNY payouts are accepted. Duplicate webhooks with the same payload return success without re-crediting; duplicates with conflicting amount/account/currency/status return `409 Conflict`.
 
 ## Two-Factor Flow
 
@@ -95,12 +147,13 @@ curl -X POST http://127.0.0.1:8000/api/login \
 ```
 
 The response includes `two_factor.session_token`. The first login also returns a TOTP `secret` and `provisioning_uri` so the account can be added to an authenticator app.
+The response also includes `access_token`; pass it as `Authorization: Bearer <token>`.
 
 Verify the current six-digit code:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/2fa/verify \
-  -u test@example.com:password \
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"code":"123456","session_token":"PASTE_SESSION_TOKEN"}'
 ```
@@ -109,10 +162,21 @@ Use the same token for protected financial requests:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/swap \
-  -u test@example.com:password \
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN" \
   -d '{"source_account_id":1,"destination_account_id":2,"amount_minor":50000,"idempotency_key":"local-swap-1"}'
+```
+
+The seeded reviewer account is:
+
+```text
+Email: test@example.com
+Password: password
+TOTP secret: JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP
+NGN opening balance: 100000 minor units, inserted through the ledger
+CNY wallet: created with zero balance
+Seeded rate: NGN/CNY rate_micro = 500
 ```
 
 ## Quality Gates
