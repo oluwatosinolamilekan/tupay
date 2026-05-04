@@ -73,14 +73,22 @@ php artisan queue:work
 
 ## API Surface
 
-```http
-POST /api/login                 # rate-limited, returns Sanctum bearer token
-POST /api/2fa/verify            # bearer token required, rate-limited
-POST /api/swap                  # bearer token + verified TOTP session required
-POST /api/transfer              # bearer token + verified TOTP session required
-POST /api/webhooks/settlement   # HMAC signature required
-GET  /api/ledger/{wallet_id}    # bearer token + verified TOTP session required
-```
+| Method | Endpoint | Description | Security Level |
+| --- | --- | --- | --- |
+| POST | `/api/login` | Authenticate user and return token. | Rate-limited |
+| POST | `/api/2fa/verify` | Verify TOTP for the current session. | Rate-limited |
+| POST | `/api/swap` | Exchange NGN for CNY. | 2FA Required |
+| POST | `/api/webhooks/settlement` | Third-party confirmation. | Signature Verified |
+| GET | `/api/ledger/{wallet_id}` | Paginated transaction history. | Optimized Indexing |
+
+Additional implemented endpoints:
+
+| Method | Endpoint | Description | Security Level |
+| --- | --- | --- | --- |
+| POST | `/api/transfer` | Transfer between same-currency accounts. | 2FA Required |
+| POST | `/api/accounts` | Create an NGN or CNY wallet. | 2FA Required |
+| GET | `/api/accounts/{account}` | View wallet details. | 2FA Required |
+| POST | `/api/accounts/{account}/deposits` | Seed or credit a wallet through an idempotent deposit flow. | 2FA Required |
 
 Assessment helper routes for account creation and deposits are also protected by bearer token, TOTP, and finance rate limits.
 
