@@ -8,13 +8,15 @@ use App\Services\WalletService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 
+use function Pest\Laravel\postJson;
+
 uses(RefreshDatabase::class);
 
 it('rejects duplicate account currency for a user', function (): void {
     $user = User::factory()->create();
     $sessionToken = walletApiVerifiedTwoFactorSession($user);
 
-    $firstResponse = $this->postJson('/api/accounts', [
+    $firstResponse = postJson('/api/accounts', [
         'currency' => 'ngn',
     ], walletApiAuthHeaders($user, $sessionToken));
 
@@ -24,7 +26,7 @@ it('rejects duplicate account currency for a user', function (): void {
         ->assertJsonPath('data.currency', 'NGN')
         ->assertJsonPath('data.balance_minor', 0);
 
-    $this->postJson('/api/accounts', [
+    postJson('/api/accounts', [
         'currency' => 'NGN',
     ], walletApiAuthHeaders($user, $sessionToken))
         ->assertUnprocessable()
@@ -44,12 +46,12 @@ it('deposits money idempotently', function (): void {
         'metadata' => ['provider' => 'bank-transfer'],
     ];
 
-    $this->postJson("/api/accounts/{$account->id}/deposits", $payload, walletApiAuthHeaders($account->user, $sessionToken))
+    postJson("/api/accounts/{$account->id}/deposits", $payload, walletApiAuthHeaders($account->user, $sessionToken))
         ->assertCreated()
         ->assertJsonPath('data.amount_minor', 25_000)
         ->assertJsonPath('data.balance_after_minor', 25_000);
 
-    $this->postJson("/api/accounts/{$account->id}/deposits", $payload, walletApiAuthHeaders($account->user, $sessionToken))
+    postJson("/api/accounts/{$account->id}/deposits", $payload, walletApiAuthHeaders($account->user, $sessionToken))
         ->assertOk()
         ->assertJsonPath('data.balance_after_minor', 25_000);
 
@@ -63,7 +65,7 @@ it('transfers money between same currency accounts', function (): void {
     $destination = Account::factory()->create(['currency' => 'NGN', 'balance_minor' => 10_000]);
     $sessionToken = walletApiVerifiedTwoFactorSession($user);
 
-    $this->postJson('/api/transfer', [
+    postJson('/api/transfer', [
         'source_account_id' => $source->id,
         'destination_account_id' => $destination->id,
         'amount_minor' => 30_000,
@@ -103,7 +105,7 @@ it('prevents invalid transfers', function (): void {
     $destination = Account::factory()->create(['currency' => 'NGN', 'balance_minor' => 0]);
     $sessionToken = walletApiVerifiedTwoFactorSession($user);
 
-    $this->postJson('/api/transfer', [
+    postJson('/api/transfer', [
         'source_account_id' => $source->id,
         'destination_account_id' => $destination->id,
         'amount_minor' => 10_001,
@@ -114,7 +116,7 @@ it('prevents invalid transfers', function (): void {
 
     $usdAccount = Account::factory()->create(['currency' => 'USD']);
 
-    $this->postJson('/api/transfer', [
+    postJson('/api/transfer', [
         'source_account_id' => $source->id,
         'destination_account_id' => $usdAccount->id,
         'amount_minor' => 1_000,
@@ -130,7 +132,7 @@ it('prevents transfers from accounts owned by another user', function (): void {
     $destination = Account::factory()->create(['user_id' => $user->id, 'currency' => 'NGN', 'balance_minor' => 0]);
     $sessionToken = walletApiVerifiedTwoFactorSession($user);
 
-    $this->postJson('/api/transfer', [
+    postJson('/api/transfer', [
         'source_account_id' => $source->id,
         'destination_account_id' => $destination->id,
         'amount_minor' => 1_000,

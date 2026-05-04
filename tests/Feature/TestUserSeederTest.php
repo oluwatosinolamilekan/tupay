@@ -8,10 +8,13 @@ use Database\Seeders\TestUserSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
 
+use function Pest\Laravel\assertDatabaseHas;
+use function Pest\Laravel\seed;
+
 uses(RefreshDatabase::class);
 
 it('seeds a test user with balance and active two factor secret', function (): void {
-    $this->seed(TestUserSeeder::class);
+    seed(TestUserSeeder::class);
 
     $user = User::query()->where('email', 'test@example.com')->firstOrFail();
     $account = Account::query()
@@ -35,7 +38,7 @@ it('seeds a test user with balance and active two factor secret', function (): v
         ->and($cnyAccount->balance_minor)->toBe(0)
         ->and(LedgerTransaction::query()->where('account_id', $account->id)->sum('amount_minor'))->toBe(100_000);
 
-    $this->assertDatabaseHas('exchange_rates', [
+    assertDatabaseHas('exchange_rates', [
         'base_currency' => 'NGN',
         'quote_currency' => 'CNY',
         'rate_micro' => 500,

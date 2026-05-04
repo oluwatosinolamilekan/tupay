@@ -10,6 +10,10 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Queue;
 
+use function Pest\Laravel\call;
+use function Pest\Laravel\postJson;
+use function Pest\Laravel\withHeaders;
+
 uses(RefreshDatabase::class);
 
 it('valid webhook returns 202 and dispatches job', function (): void {
@@ -17,7 +21,7 @@ it('valid webhook returns 202 and dispatches job', function (): void {
     $account = Account::factory()->create(['currency' => 'CNY', 'balance_minor' => 0]);
     [$payload, $body, $signature] = settlementWebhookSignedPayload($account, 'provider-rmb-valid');
 
-    $this->call('POST', '/api/webhooks/settlement', [], [], [], [
+    call('POST', '/api/webhooks/settlement', [], [], [], [
         'CONTENT_TYPE' => 'application/json',
         'HTTP_ACCEPT' => 'application/json',
         'HTTP_X_TUPAY_SIGNATURE' => $signature,
@@ -42,7 +46,7 @@ it('duplicate webhook returns 200 without double-crediting', function (): void {
         'HTTP_X_TUPAY_SIGNATURE' => $signature,
     ];
 
-    $this->call('POST', '/api/webhooks/settlement', [], [], [], $server, $body)
+    call('POST', '/api/webhooks/settlement', [], [], [], $server, $body)
         ->assertAccepted();
 
     Queue::assertPushed(ProcessSettlementWebhook::class, function (ProcessSettlementWebhook $job) use ($account): bool {
@@ -51,7 +55,7 @@ it('duplicate webhook returns 200 without double-crediting', function (): void {
         return $account->refresh()->balance_minor === 12_500;
     });
 
-    $this->call('POST', '/api/webhooks/settlement', [], [], [], $server, $body)
+    call('POST', '/api/webhooks/settlement', [], [], [], $server, $body)
         ->assertOk()
         ->assertJsonPath('message', 'Webhook already accepted.')
         ->assertJsonPath('provider_reference', $payload['provider_reference']);
@@ -61,7 +65,8 @@ it('duplicate webhook returns 200 without double-crediting', function (): void {
     $job = new ProcessSettlementWebhook(SettlementWebhook::query()->firstOrFail()->id);
     $job->handle(app(WalletService::class));
 
-    Notification::assertSentTo($account->user, SettlementPayoutConfirmed::class, 1);
+    Notification::assertSentTo($account->user, SettlementPayoutConfirmed::class);
+    Notification::assertSentTimes(SettlementPayoutConfirmed::class, 1);
     expect($account->refresh()->balance_minor)->toBe(12_500)
         ->and(LedgerTransaction::query()->where('idempotency_key', 'settlement:provider-rmb-duplicate')->count())->toBe(1);
 });
@@ -71,8 +76,9 @@ it('invalid signature returns 401', function (): void {
     $account = Account::factory()->create(['currency' => 'CNY', 'balance_minor' => 0]);
     [$payload] = settlementWebhookSignedPayload($account, 'provider-rmb-invalid-signature');
 
-    $this->withHeaders(['X-Tupay-Signature' => 'bad'])
-        ->postJson('/api/webhooks/settlement', $payload)
+    withHeaders(['X-Tupay-Signature' => 'bad']);
+
+    postJson('/api/webhooks/settlement', $payload)
         ->assertUnauthorized()
         ->assertJsonPath('message', 'Invalid webhook signature.');
 

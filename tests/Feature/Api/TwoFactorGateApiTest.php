@@ -5,12 +5,17 @@ use App\Models\User;
 use App\Services\TwoFactorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 
+use function Pest\Laravel\getJson;
+use function Pest\Laravel\postJson;
+use function Pest\Laravel\withHeader;
+use function Pest\Laravel\withToken;
+
 uses(RefreshDatabase::class);
 
 it('financial route without 2FA returns 403 with two_factor_required flag', function (): void {
-    [$user, $account, $accessToken] = twoFactorGateLoginUserWithAccount($this);
+    [$user, $account, $accessToken] = twoFactorGateLoginUserWithAccount();
 
-    $this->withToken($accessToken)
+    withToken($accessToken)
         ->getJson("/api/accounts/{$account->id}")
         ->assertForbidden()
         ->assertJsonPath('message', 'Two-factor verification required.')
@@ -18,16 +23,17 @@ it('financial route without 2FA returns 403 with two_factor_required flag', func
 });
 
 it('financial route after 2FA returns 200', function (): void {
-    [$user, $account, $accessToken, $sessionToken] = twoFactorGateLoginUserWithAccount($this);
+    [$user, $account, $accessToken, $sessionToken] = twoFactorGateLoginUserWithAccount();
 
-    $this->withToken($accessToken)->postJson('/api/2fa/verify', [
+    withToken($accessToken)->postJson('/api/2fa/verify', [
         'code' => app(TwoFactorService::class)->totp($user->two_factor_secret),
         'session_token' => $sessionToken,
     ])->assertOk();
 
-    $this->withToken($accessToken)
-        ->withHeader('X-Two-Factor-Session', $sessionToken)
-        ->getJson("/api/accounts/{$account->id}")
+    withToken($accessToken);
+    withHeader('X-Two-Factor-Session', $sessionToken);
+
+    getJson("/api/accounts/{$account->id}")
         ->assertOk()
         ->assertJsonPath('data.id', $account->id);
 });
@@ -35,12 +41,12 @@ it('financial route after 2FA returns 200', function (): void {
 /**
  * @return array{0: User, 1: Account, 2: string, 3: string}
  */
-function twoFactorGateLoginUserWithAccount($test): array
+function twoFactorGateLoginUserWithAccount(): array
 {
     $user = User::factory()->create(['password' => 'password']);
     $account = Account::factory()->create(['user_id' => $user->id, 'currency' => 'NGN']);
 
-    $loginResponse = $test->postJson('/api/login', [
+    $loginResponse = postJson('/api/login', [
         'email' => $user->email,
         'password' => 'password',
     ])->assertOk();

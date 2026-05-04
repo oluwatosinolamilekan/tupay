@@ -8,12 +8,14 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 
+use function Pest\Laravel\postJson;
+
 uses(RefreshDatabase::class);
 
 it('swap debits NGN and credits CNY correctly', function (): void {
     [$user, $ngn, $cny, $headers] = swapApiFixture();
 
-    $this->postJson('/api/swap', [
+    postJson('/api/swap', [
         'source_account_id' => $ngn->id,
         'destination_account_id' => $cny->id,
         'amount_minor' => 50_000,
@@ -32,7 +34,7 @@ it('swap debits NGN and credits CNY correctly', function (): void {
 it('swap with insufficient funds returns 422', function (): void {
     [$user, $ngn, $cny, $headers] = swapApiFixture(ngnBalance: 10_000);
 
-    $this->postJson('/api/swap', [
+    postJson('/api/swap', [
         'source_account_id' => $ngn->id,
         'destination_account_id' => $cny->id,
         'amount_minor' => 10_001,
@@ -54,10 +56,10 @@ it('swap is idempotent with same key returning 200 with same records', function 
         'idempotency_key' => 'swap-idempotent',
     ];
 
-    $firstResponse = $this->postJson('/api/swap', $payload, $headers)
+    $firstResponse = postJson('/api/swap', $payload, $headers)
         ->assertCreated();
 
-    $secondResponse = $this->postJson('/api/swap', $payload, $headers)
+    $secondResponse = postJson('/api/swap', $payload, $headers)
         ->assertOk()
         ->assertJsonPath('data.debit.id', $firstResponse->json('data.debit.id'))
         ->assertJsonPath('data.credit.id', $firstResponse->json('data.credit.id'));
@@ -72,7 +74,7 @@ it('swap is idempotent with same key returning 200 with same records', function 
 it('swap wrong direction CNY to NGN returns 422', function (): void {
     [$user, $ngn, $cny, $headers] = swapApiFixture(cnyBalance: 100);
 
-    $this->postJson('/api/swap', [
+    postJson('/api/swap', [
         'source_account_id' => $cny->id,
         'destination_account_id' => $ngn->id,
         'amount_minor' => 50,
