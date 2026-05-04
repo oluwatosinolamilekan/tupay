@@ -20,7 +20,10 @@ class RequireTwoFactor
             ! is_string($sessionToken) ||
             ! Cache::has(VerifyTwoFactorAction::verifiedCacheKey($user, $sessionToken))
         ) {
-            return response()->json(['message' => 'Two-factor verification required.'], 403);
+            return response()->json([
+                'message' => 'Two-factor verification required.',
+                'two_factor_required' => true,
+            ], 403);
         }
 
         return $next($request);
