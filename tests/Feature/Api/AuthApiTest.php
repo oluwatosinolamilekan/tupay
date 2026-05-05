@@ -5,6 +5,7 @@ use App\Models\User;
 use App\Services\TwoFactorService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\DB;
 
 use function Pest\Laravel\postJson;
 use function Pest\Laravel\withToken;
@@ -54,6 +55,17 @@ it('2FA verify with valid code returns 200 and stamps verified cache key', funct
 
     expect(Cache::has(VerifyTwoFactorAction::verifiedCacheKey($user, $sessionToken)))->toBeTrue()
         ->and(Cache::has(VerifyTwoFactorAction::pendingCacheKey($user, $sessionToken)))->toBeFalse();
+});
+
+it('stores two-factor secrets encrypted at rest', function (): void {
+    $user = User::factory()->create([
+        'two_factor_secret' => 'JBSWY3DPEHPK3PXP',
+    ]);
+
+    $storedSecret = DB::table('users')->where('id', $user->id)->value('two_factor_secret');
+
+    expect($user->two_factor_secret)->toBe('JBSWY3DPEHPK3PXP')
+        ->and($storedSecret)->not->toBe('JBSWY3DPEHPK3PXP');
 });
 
 it('login with invalid credentials returns 422', function (): void {
