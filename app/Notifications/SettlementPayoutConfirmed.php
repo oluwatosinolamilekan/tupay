@@ -14,9 +14,19 @@ class SettlementPayoutConfirmed extends Notification implements ShouldQueue
 {
     use Queueable;
 
+    public int $tries = 3;
+
     public function __construct(public readonly LedgerTransaction $transaction)
     {
         //
+    }
+
+    /**
+     * @return list<int>
+     */
+    public function backoff(): array
+    {
+        return [30, 120];
     }
 
     public function via(object $notifiable): array
