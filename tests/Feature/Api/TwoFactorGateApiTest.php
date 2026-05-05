@@ -13,14 +13,13 @@ use function Pest\Laravel\withToken;
 
 uses(RefreshDatabase::class);
 
-it('financial route without 2FA returns 403 with two_factor_required flag', function (): void {
+it('dashboard read route without 2FA returns 200', function (): void {
     [$user, $account, $accessToken] = twoFactorGateLoginUserWithAccount();
 
     withToken($accessToken)
         ->getJson("/api/accounts/{$account->id}")
-        ->assertForbidden()
-        ->assertJsonPath('message', 'Two-factor verification required.')
-        ->assertJsonPath('two_factor_required', true);
+        ->assertOk()
+        ->assertJsonPath('data.id', $account->id);
 });
 
 it('swap without 2FA returns 403 with two_factor_required flag', function (): void {
@@ -39,7 +38,7 @@ it('swap without 2FA returns 403 with two_factor_required flag', function (): vo
         ->assertJsonPath('two_factor_required', true);
 });
 
-it('financial route after 2FA returns 200', function (): void {
+it('dashboard read route after 2FA still returns 200', function (): void {
     [$user, $account, $accessToken, $sessionToken] = twoFactorGateLoginUserWithAccount();
 
     withToken($accessToken)->postJson('/api/2fa/verify', [
