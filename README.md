@@ -166,14 +166,74 @@ curl -X POST http://127.0.0.1:8000/api/2fa/verify \
   -d '{"code":"123456","session_token":"PASTE_SESSION_TOKEN"}'
 ```
 
-Use the same token for protected financial requests:
+Use the same bearer token and verified 2FA session for protected financial requests. The seeded account usually has NGN wallet ID `1` and CNY wallet ID `2`; replace IDs if your local database differs.
+
+Create an account:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/accounts \
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN" \
+  -d '{"currency":"CNY"}'
+```
+
+View an account:
+
+```bash
+curl -X GET http://127.0.0.1:8000/api/accounts/1 \
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
+  -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN"
+```
+
+Deposit into an account:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/accounts/1/deposits \
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN" \
+  -d '{"amount_minor":25000,"idempotency_key":"local-deposit-1","metadata":{"channel":"curl"}}'
+```
+
+Swap NGN to CNY:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/api/swap \
   -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
   -H "Content-Type: application/json" \
   -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN" \
-  -d '{"source_account_id":1,"destination_account_id":2,"amount_minor":50000,"idempotency_key":"local-swap-1"}'
+  -d '{"source_account_id":1,"destination_account_id":2,"amount_minor":50000,"idempotency_key":"local-swap-1","metadata":{"channel":"curl"}}'
+```
+
+Transfer between same-currency accounts:
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/transfer \
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN" \
+  -d '{"source_account_id":1,"destination_account_id":3,"amount_minor":10000,"idempotency_key":"local-transfer-1","metadata":{"channel":"curl"}}'
+```
+
+List ledger transactions:
+
+```bash
+curl -X GET "http://127.0.0.1:8000/api/ledger/1?per_page=25" \
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
+  -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN"
+```
+
+Send a signed settlement webhook. The signature must be generated from the exact raw body sent to the API, and the secret must match `SETTLEMENT_WEBHOOK_SECRET`.
+
+```bash
+BODY='{"provider_reference":"provider-rmb-local-1","account_id":2,"amount_minor":12500,"currency":"CNY","status":"completed"}'
+SIGNATURE=$(printf '%s' "$BODY" | openssl dgst -sha256 -hmac "settlement-test-secret" -binary | xxd -p -c 256)
+
+curl -X POST http://127.0.0.1:8000/api/webhooks/settlement \
+  -H "Content-Type: application/json" \
+  -H "X-Tupay-Signature: $SIGNATURE" \
+  -d "$BODY"
 ```
 
 The seeded reviewer account is:
