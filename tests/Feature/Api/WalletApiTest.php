@@ -92,7 +92,11 @@ it('deposits money idempotently', function (): void {
         ->assertJsonPath('data.balance_after_minor', 25_000);
 
     expect($account->refresh()->balance_minor)->toBe(25_000)
-        ->and(LedgerTransaction::query()->count())->toBe(1);
+        ->and(LedgerTransaction::query()->count())->toBe(2)
+        ->and(LedgerTransaction::query()
+            ->where('idempotency_key', 'deposit-123')
+            ->where('direction', 'debit')
+            ->exists())->toBeTrue();
 });
 
 it('transfers money between same currency accounts', function (): void {

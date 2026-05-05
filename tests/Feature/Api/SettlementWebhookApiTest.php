@@ -68,7 +68,7 @@ it('duplicate webhook returns 200 without double-crediting', function (): void {
     Notification::assertSentTo($account->user, SettlementPayoutConfirmed::class);
     Notification::assertSentTimes(SettlementPayoutConfirmed::class, 1);
     expect($account->refresh()->balance_minor)->toBe(12_500)
-        ->and(LedgerTransaction::query()->where('idempotency_key', 'settlement:provider-rmb-duplicate')->count())->toBe(1);
+        ->and(LedgerTransaction::query()->where('idempotency_key', 'settlement:provider-rmb-duplicate')->count())->toBe(2);
 });
 
 it('invalid signature returns 401', function (): void {
@@ -135,6 +135,11 @@ it('processed webhook credits the correct CNY account via job', function (): voi
             ->where('account_id', $account->id)
             ->where('idempotency_key', 'settlement:provider-rmb-process')
             ->where('amount_minor', 12_500)
+            ->where('direction', 'credit')
+            ->exists())->toBeTrue()
+        ->and(LedgerTransaction::query()
+            ->where('idempotency_key', 'settlement:provider-rmb-process')
+            ->where('direction', 'debit')
             ->exists())->toBeTrue();
 });
 

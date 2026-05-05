@@ -20,6 +20,8 @@ class WalletService
 {
     private const RATE_MICRO_SCALE = '1000000';
 
+    private const SYSTEM_EMAIL = 'system@tupay.local';
+
     public function createAccount(User $user, string $currency): Account
     {
         $currency = strtoupper($currency);
@@ -35,12 +37,12 @@ class WalletService
 
     public function deposit(Account $account, int $amountMinor, string $idempotencyKey, array $metadata = []): LedgerTransaction
     {
-        return $this->credit($account, $amountMinor, $idempotencyKey, LedgerTransactionType::Deposit, $metadata);
+        return $this->externalCredit($account, $amountMinor, $idempotencyKey, LedgerTransactionType::Deposit, $metadata);
     }
 
     public function creditSettlement(Account $account, int $amountMinor, string $idempotencyKey, array $metadata = []): LedgerTransaction
     {
-        return $this->credit($account, $amountMinor, $idempotencyKey, LedgerTransactionType::Settlement, $metadata);
+        return $this->externalCredit($account, $amountMinor, $idempotencyKey, LedgerTransactionType::Settlement, $metadata);
     }
 
     /**
@@ -243,12 +245,9 @@ class WalletService
         }
     }
 
-    private function credit(Account $account, int $amountMinor, string $idempotencyKey, LedgerTransactionType $type, array $metadata = []): LedgerTransaction
+    private function externalCredit(Account $account, int $amountMinor, string $idempotencyKey, LedgerTransactionType $type, array $metadata = []): LedgerTransaction
     {
         return DB::transaction(function () use ($account, $amountMinor, $idempotencyKey, $type, $metadata): LedgerTransaction {
-            /** @var Account $lockedAccount */
-            $lockedAccount = Account::query()->whereKey($account->id)->lockForUpdate()->firstOrFail();
-
             $existing = LedgerTransaction::query()
                 ->where('idempotency_key', $idempotencyKey)
                 ->where('direction', LedgerTransactionDirection::Credit->value)
@@ -258,23 +257,71 @@ class WalletService
                 return $existing;
             }
 
-            $before = $lockedAccount->balance_minor;
-            $after = $before + $amountMinor;
+            $clearing = $this->clearingAccount($account->currency);
 
-            $lockedAccount->forceFill(['balance_minor' => $after])->save();
+            /** @var Collection<int, Account> $lockedAccounts */
+            $lockedAccounts = Account::query()
+                ->whereIn('id', [$clearing->id, $account->id])
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            /** @var Account $lockedClearing */
+            $lockedClearing = $lockedAccounts->get($clearing->id);
+            /** @var Account $lockedAccount */
+            $lockedAccount = $lockedAccounts->get($account->id);
+
+            $clearingBefore = $lockedClearing->balance_minor;
+            $clearingAfter = $clearingBefore - $amountMinor;
+            $accountBefore = $lockedAccount->balance_minor;
+            $accountAfter = $accountBefore + $amountMinor;
+            $reference = $this->reference();
+
+            $lockedClearing->forceFill(['balance_minor' => $clearingAfter])->save();
+            $lockedAccount->forceFill(['balance_minor' => $accountAfter])->save();
+
+            LedgerTransaction::create([
+                'account_id' => $lockedClearing->id,
+                'counterparty_account_id' => $lockedAccount->id,
+                'reference' => $reference.'-CLR',
+                'idempotency_key' => $idempotencyKey,
+                'type' => $type,
+                'direction' => LedgerTransactionDirection::Debit,
+                'amount_minor' => $amountMinor,
+                'balance_before_minor' => $clearingBefore,
+                'balance_after_minor' => $clearingAfter,
+                'status' => LedgerTransactionStatus::Completed,
+                'metadata' => array_merge($metadata, ['clearing_account' => true]),
+            ]);
 
             return LedgerTransaction::create([
                 'account_id' => $lockedAccount->id,
-                'reference' => $this->reference(),
+                'counterparty_account_id' => $lockedClearing->id,
+                'reference' => $reference.'-CR',
                 'idempotency_key' => $idempotencyKey,
                 'type' => $type,
                 'direction' => LedgerTransactionDirection::Credit,
                 'amount_minor' => $amountMinor,
-                'balance_before_minor' => $before,
-                'balance_after_minor' => $after,
+                'balance_before_minor' => $accountBefore,
+                'balance_after_minor' => $accountAfter,
                 'status' => LedgerTransactionStatus::Completed,
                 'metadata' => $metadata,
             ]);
         });
+    }
+
+    private function clearingAccount(string $currency): Account
+    {
+        $user = User::firstOrCreate(
+            ['email' => self::SYSTEM_EMAIL],
+            [
+                'name' => 'Tupay Clearing',
+                'password' => Str::password(32),
+                'email_verified_at' => now(),
+            ],
+        );
+
+        return $this->createAccount($user, $currency);
     }
 }
