@@ -68,6 +68,49 @@ it('stores two-factor secrets encrypted at rest', function (): void {
         ->and($storedSecret)->not->toBe('JBSWY3DPEHPK3PXP');
 });
 
+it('login re-encrypts a legacy plaintext two-factor secret', function (): void {
+    $user = User::factory()->create(['password' => 'password']);
+
+    DB::table('users')->where('id', $user->id)->update([
+        'two_factor_secret' => 'JBSWY3DPEHPK3PXP',
+    ]);
+
+    postJson('/api/login', [
+        'email' => $user->email,
+        'password' => 'password',
+    ])
+        ->assertOk()
+        ->assertJsonPath('two_factor.setup_required', false);
+
+    $storedSecret = DB::table('users')->where('id', $user->id)->value('two_factor_secret');
+
+    expect($user->fresh()->two_factor_secret)->toBe('JBSWY3DPEHPK3PXP')
+        ->and($storedSecret)->not->toBe('JBSWY3DPEHPK3PXP');
+});
+
+it('login replaces an unreadable two-factor secret payload', function (): void {
+    $user = User::factory()->create(['password' => 'password']);
+
+    DB::table('users')->where('id', $user->id)->update([
+        'two_factor_secret' => 'not-a-valid-encrypted-payload',
+    ]);
+
+    postJson('/api/login', [
+        'email' => $user->email,
+        'password' => 'password',
+    ])
+        ->assertOk()
+        ->assertJsonPath('two_factor.setup_required', true)
+        ->assertJsonStructure([
+            'two_factor' => [
+                'secret',
+                'provisioning_uri',
+            ],
+        ]);
+
+    expect($user->fresh()->two_factor_secret)->not->toBeNull();
+});
+
 it('login with invalid credentials returns 422', function (): void {
     $user = User::factory()->create(['password' => 'password']);
 

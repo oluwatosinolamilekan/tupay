@@ -12,6 +12,12 @@ class TwoFactorService
     public function ensureSecret(User $user): string
     {
         if ($user->two_factor_secret !== null) {
+            if ($user->getRawOriginal('two_factor_secret') === $user->two_factor_secret) {
+                $user->forceFill([
+                    'two_factor_secret' => $user->two_factor_secret,
+                ])->save();
+            }
+
             return $user->two_factor_secret;
         }
 
