@@ -71,6 +71,10 @@ Run the queue worker when testing settlement webhook processing outside the test
 php artisan queue:work
 ```
 
+## Postman Collection
+
+The repository includes a Postman collection for manual API testing at `postman/tupay-api.postman_collection.json`. Import that file into Postman, set `base_url` to your local server such as `http://127.0.0.1:8000`, then run the authentication and wallet requests from the collection.
+
 ## API Surface
 
 | Method | Endpoint | Description | Security Level |
