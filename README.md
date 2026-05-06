@@ -79,7 +79,7 @@ php artisan queue:work
 | POST | `/api/2fa/verify` | Verify TOTP for the current session. | Rate-limited |
 | POST | `/api/swap` | Exchange NGN for CNY. | 2FA Required |
 | POST | `/api/webhooks/settlement` | Third-party confirmation. | Signature Verified |
-| GET | `/api/ledger/{wallet_id}` | Paginated transaction history. | Optimized Indexing |
+| GET | `/api/ledger/{wallet_id}` | Paginated transaction history. | Bearer Auth + Optimized Indexing |
 
 Additional implemented endpoints:
 
@@ -87,10 +87,10 @@ Additional implemented endpoints:
 | --- | --- | --- | --- |
 | POST | `/api/transfer` | Transfer between same-currency accounts. | 2FA Required |
 | POST | `/api/accounts` | Create an NGN or CNY wallet. | 2FA Required |
-| GET | `/api/accounts/{account}` | View wallet details. | 2FA Required |
+| GET | `/api/accounts/{account}` | View wallet details. | Bearer Auth |
 | POST | `/api/accounts/{account}/deposits` | Seed or credit a wallet through an idempotent deposit flow. | 2FA Required |
 
-Assessment helper routes for account creation and deposits are also protected by bearer token, TOTP, and finance rate limits.
+Dashboard-style read routes require bearer auth and finance rate limits. Account creation, deposits, swaps, and transfers are protected by bearer token, TOTP, and finance rate limits.
 
 ## Architecture
 
@@ -103,7 +103,7 @@ Controllers stay thin and delegate business rules into action and service classe
 - `app/Http/Middleware` contains the high-value action gate and webhook signature verification.
 - `app/Jobs/ProcessSettlementWebhook.php` performs asynchronous settlement crediting and notification.
 
-The database separates current balances (`accounts.balance_minor`) from immutable audit history (`ledger_transactions`). A balance can be checked by summing completed credit/debit ledger rows for the wallet, and every mutation stores `balance_before_minor`, `balance_after_minor`, `idempotency_key`, and JSON `metadata`.
+The database separates current balances (`accounts.balance_minor`) from immutable audit history (`ledger_transactions`). A balance can be checked by summing completed credit/debit ledger rows for the wallet, and every mutation stores `balance_before_minor`, `balance_after_minor`, `idempotency_key`, and JSON `metadata`. Deposits and settlement credits are also double-entry: the user wallet receives the credit, and a system-owned clearing wallet records the matching debit.
 
 ## Concurrency Strategy
 
@@ -113,11 +113,11 @@ Swaps are protected at three layers:
 - `WalletService` wraps swaps/transfers/credits in `DB::transaction()`.
 - Source and destination accounts are selected in stable ID order with `lockForUpdate()`, preventing lost updates and reducing deadlock risk.
 
-Idempotency keys are unique per ledger direction, so retrying the same swap or transfer returns the existing debit/credit pair instead of mutating balances again.
+Idempotency keys are unique per ledger direction, so retrying the same deposit, swap, transfer, or settlement returns the existing ledger entries instead of mutating balances again.
 
 ## Security Measures
 
-`POST /api/login` validates credentials and issues a Laravel Sanctum bearer token. Dashboard-style reads can use the token, but financial routes also require a verified TOTP session via `X-Two-Factor-Session`.
+`POST /api/login` validates credentials and issues a Laravel Sanctum bearer token. Dashboard-style reads can use the token, but financial write routes also require a verified TOTP session via `X-Two-Factor-Session`. TOTP secrets are stored with Laravel's encrypted cast so the raw shared secret is not persisted in plaintext.
 
 The 2FA flow is intentionally short-lived:
 
@@ -142,7 +142,7 @@ That makes both exchange-rate caching and per-user swap locks shared across app 
 
 ## Settlement Webhook Assumptions
 
-The mock partner sends `provider_reference`, `account_id`, `amount_minor`, `currency`, and `status`. Only completed CNY payouts are accepted. Duplicate webhooks with the same payload return success without re-crediting; duplicates with conflicting amount/account/currency/status return `409 Conflict`.
+The mock partner sends `provider_reference`, `account_id`, `amount_minor`, `currency`, and `status`. Only completed CNY payouts are accepted. Duplicate webhooks with the same payload return success without re-crediting; duplicates with conflicting amount/account/currency/status return `409 Conflict`. Webhook processing runs through a queued job with retries and backoff before the user notification is queued.
 
 ## Two-Factor Flow
 
@@ -182,8 +182,7 @@ View an account:
 
 ```bash
 curl -X GET http://127.0.0.1:8000/api/accounts/1 \
-  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
-  -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN"
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN"
 ```
 
 Deposit into an account:
@@ -220,8 +219,7 @@ List ledger transactions:
 
 ```bash
 curl -X GET "http://127.0.0.1:8000/api/ledger/1?per_page=25" \
-  -H "Authorization: Bearer PASTE_ACCESS_TOKEN" \
-  -H "X-Two-Factor-Session: PASTE_SESSION_TOKEN"
+  -H "Authorization: Bearer PASTE_ACCESS_TOKEN"
 ```
 
 Send a signed settlement webhook. The signature must be generated from the exact raw body sent to the API, and the secret must match `SETTLEMENT_WEBHOOK_SECRET`.
@@ -282,4 +280,4 @@ Keep changes readable and reviewable:
 
 Set `SETTLEMENT_WEBHOOK_SECRET` in every runtime environment. Webhook middleware fails fast when the secret is missing, and production review should reject empty or example secrets.
 
-For multi-server deployments, use Redis for `CACHE_STORE` so user-level swap locks work consistently across app servers.
+For multi-server deployments, use MySQL or PostgreSQL for `DB_CONNECTION` and Redis for `CACHE_STORE` and `QUEUE_CONNECTION` so ledger row locks, cached exchange rates, user-level swap locks, and queued settlement processing work consistently across app servers.
