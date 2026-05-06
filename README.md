@@ -154,8 +154,17 @@ curl -X POST http://127.0.0.1:8000/api/login \
   -d '{"email":"test@example.com","password":"password","device_name":"local"}'
 ```
 
-The response includes `two_factor.session_token`. The first login also returns a TOTP `secret` and `provisioning_uri` so the account can be added to an authenticator app.
-The response also includes `access_token`; pass it as `Authorization: Bearer <token>`.
+The response includes `access_token` and `two_factor.session_token`. Pass the token as `Authorization: Bearer <token>` on the verify request, and pass the session token in the request body.
+
+For a brand-new 2FA setup, the login response also returns `two_factor.secret` and `two_factor.provisioning_uri`. Add the secret or provisioning URI to Google Authenticator, Authy, 1Password, or another TOTP app, then use the current six-digit code from that app.
+
+For local testing, you can generate the same six-digit code from the terminal. Make sure the email in the command is the same email you used for `/api/login`; otherwise the code will be generated from a different user's secret and `/api/2fa/verify` will return `Invalid two-factor code`.
+
+```bash
+php artisan tinker --execute='$user = App\Models\User::where("email", "test@example.com")->firstOrFail(); echo app(App\Services\TwoFactorService::class)->totp($user->two_factor_secret).PHP_EOL;'
+```
+
+The generated code changes every 30 seconds, so run the command immediately before verifying 2FA.
 
 Verify the current six-digit code:
 
