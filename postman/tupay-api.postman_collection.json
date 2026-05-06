@@ -1,0 +1,754 @@
+{
+  "info": {
+    "_postman_id": "d9ac36b1-6252-4f69-a30b-9a7458bb59b4",
+    "name": "Tupay API",
+    "description": "Postman collection rebuilt from routes/api.php. Run Auth > Login, generate a current TOTP code, then run Auth > Verify 2FA before protected financial actions.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "email",
+      "value": "test@example.com",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "password",
+      "type": "string"
+    },
+    {
+      "key": "device_name",
+      "value": "postman",
+      "type": "string"
+    },
+    {
+      "key": "two_factor_session_token",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "two_factor_code",
+      "value": "123456",
+      "type": "string"
+    },
+    {
+      "key": "two_factor_secret",
+      "value": "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+      "type": "string"
+    },
+    {
+      "key": "ngn_account_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "cny_account_id",
+      "value": "2",
+      "type": "string"
+    },
+    {
+      "key": "destination_account_id",
+      "value": "3",
+      "type": "string"
+    },
+    {
+      "key": "ledger_account_id",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "settlement_webhook_secret",
+      "value": "settlement-test-secret",
+      "type": "string"
+    },
+    {
+      "key": "provider_reference",
+      "value": "provider-rmb-{{$timestamp}}",
+      "type": "string"
+    },
+    {
+      "key": "access_token",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('login succeeded', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const json = pm.response.json();",
+                  "if (json.email) pm.collectionVariables.set('email', json.email);",
+                  "if (json.access_token) pm.collectionVariables.set('access_token', json.access_token);",
+                  "if (json.two_factor?.session_token) pm.collectionVariables.set('two_factor_session_token', json.two_factor.session_token);",
+                  "if (json.two_factor?.secret) pm.collectionVariables.set('two_factor_secret', json.two_factor.secret);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\",\n  \"device_name\": \"{{device_name}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "login"
+              ]
+            },
+            "description": "Validates email/password and returns a Sanctum bearer token plus two_factor.session_token. If setup_required is true, the response also includes a TOTP secret and provisioning URI.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Verify 2FA",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const secret = pm.collectionVariables.get('two_factor_secret');",
+                  "",
+                  "function bytesToWordArray(bytes) {",
+                  "  const words = [];",
+                  "  for (let i = 0; i < bytes.length; i += 1) {",
+                  "    words[i >>> 2] |= bytes[i] << (24 - (i % 4) * 8);",
+                  "  }",
+                  "  return CryptoJS.lib.WordArray.create(words, bytes.length);",
+                  "}",
+                  "",
+                  "function base32Decode(value) {",
+                  "  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';",
+                  "  const normalized = value.replace(/=+$/g, '').replace(/\\s+/g, '').toUpperCase();",
+                  "  let buffer = 0;",
+                  "  let bitsLeft = 0;",
+                  "  const bytes = [];",
+                  "",
+                  "  for (const character of normalized) {",
+                  "    const index = alphabet.indexOf(character);",
+                  "    if (index === -1) continue;",
+                  "    buffer = (buffer << 5) | index;",
+                  "    bitsLeft += 5;",
+                  "    if (bitsLeft >= 8) {",
+                  "      bitsLeft -= 8;",
+                  "      bytes.push((buffer >> bitsLeft) & 0xff);",
+                  "    }",
+                  "  }",
+                  "",
+                  "  return bytes;",
+                  "}",
+                  "",
+                  "function currentTotpCode(base32Secret) {",
+                  "  const key = bytesToWordArray(base32Decode(base32Secret));",
+                  "  let counter = Math.floor(Date.now() / 1000 / 30);",
+                  "  const message = [];",
+                  "  for (let i = 7; i >= 0; i -= 1) {",
+                  "    message[i] = counter & 0xff;",
+                  "    counter = Math.floor(counter / 256);",
+                  "  }",
+                  "",
+                  "  const hmac = CryptoJS.HmacSHA1(bytesToWordArray(message), key);",
+                  "  const bytes = [];",
+                  "  for (let i = 0; i < hmac.sigBytes; i += 1) {",
+                  "    bytes.push((hmac.words[i >>> 2] >>> (24 - (i % 4) * 8)) & 0xff);",
+                  "  }",
+                  "",
+                  "  const offset = bytes[19] & 0x0f;",
+                  "  const binary = ((bytes[offset] & 0x7f) << 24) |",
+                  "    ((bytes[offset + 1] & 0xff) << 16) |",
+                  "    ((bytes[offset + 2] & 0xff) << 8) |",
+                  "    (bytes[offset + 3] & 0xff);",
+                  "",
+                  "  return String(binary % 1000000).padStart(6, '0');",
+                  "}",
+                  "",
+                  "if (secret) {",
+                  "  const code = currentTotpCode(secret);",
+                  "  pm.collectionVariables.set('two_factor_code', code);",
+                  "  console.log('Generated two_factor_code:', code);",
+                  "}"
+                ]
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('2FA accepted', function () {",
+                  "  pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "if (pm.response.code === 200) {",
+                  "  pm.collectionVariables.set('verified_two_factor_session_token', pm.collectionVariables.get('two_factor_session_token'));",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{two_factor_code}}\",\n  \"session_token\": \"{{two_factor_session_token}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/2fa/verify",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "2fa",
+                "verify"
+              ]
+            },
+            "description": "Requires Authorization: Bearer {{access_token}}. The pre-request script generates {{two_factor_code}} from {{two_factor_secret}}, then sends it with the session_token returned by Login. On success, protected routes accept X-Two-Factor-Session for 10 minutes."
+          },
+          "response": []
+        },
+        {
+          "name": "Protected Route Without 2FA Should Fail",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('2FA is required', function () {",
+                  "  pm.response.to.have.status(403);",
+                  "  pm.expect(pm.response.json().message).to.eql('Two-factor verification required.');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_account_id\": {{ngn_account_id}},\n  \"destination_account_id\": {{destination_account_id}},\n  \"amount_minor\": 1000,\n  \"idempotency_key\": \"missing-2fa-{{$timestamp}}\",\n  \"metadata\": {\n    \"channel\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/transfer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "transfer"
+              ]
+            },
+            "description": "Negative test for the 2FA middleware. Send Authorization: Bearer {{access_token}} without X-Two-Factor-Session. Expected response: 403 with message Two-factor verification required."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Accounts",
+      "item": [
+        {
+          "name": "Create NGN Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"NGN\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/accounts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "description": "Creates an NGN account for the authenticated user. Currency must be NGN or CNY.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Create CNY Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"CNY\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/accounts",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "accounts"
+              ]
+            },
+            "description": "Creates a CNY account for the authenticated user. Currency must be NGN or CNY.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Get Account",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/accounts/{{ngn_account_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "accounts",
+                "{{ngn_account_id}}"
+              ]
+            },
+            "description": "Returns account id, user_id, account_number, currency, balance_minor, and timestamps.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Deposit To Account",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount_minor\": 25000,\n  \"idempotency_key\": \"deposit-{{$timestamp}}\",\n  \"metadata\": {\n    \"provider\": \"bank-transfer\",\n    \"channel\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/accounts/{{ngn_account_id}}/deposits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "accounts",
+                "{{ngn_account_id}}",
+                "deposits"
+              ]
+            },
+            "description": "Credits an account. Reusing the same idempotency_key returns the existing ledger transaction.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Protected Financial Actions",
+      "auth": {
+        "type": "basic",
+        "basic": [
+          {
+            "key": "username",
+            "value": "{{email}}",
+            "type": "string"
+          },
+          {
+            "key": "password",
+            "value": "{{password}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Swap NGN To CNY",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Two-Factor-Session",
+                "value": "{{two_factor_session_token}}"
+              },
+              {
+                "key": "X-Device-Id",
+                "value": "postman-device"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_account_id\": {{ngn_account_id}},\n  \"destination_account_id\": {{cny_account_id}},\n  \"amount_minor\": 50000,\n  \"idempotency_key\": \"swap-{{$timestamp}}\",\n  \"metadata\": {\n    \"channel\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/swap",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "swap"
+              ]
+            },
+            "description": "Requires Authorization: Bearer {{access_token}} and X-Two-Factor-Session from a successful Verify 2FA request.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "Transfer",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Two-Factor-Session",
+                "value": "{{two_factor_session_token}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"source_account_id\": {{ngn_account_id}},\n  \"destination_account_id\": {{destination_account_id}},\n  \"amount_minor\": 10000,\n  \"idempotency_key\": \"transfer-protected-{{$timestamp}}\",\n  \"metadata\": {\n    \"channel\": \"postman\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/transfer",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "transfer"
+              ]
+            },
+            "description": "Requires Authorization: Bearer {{access_token}} and X-Two-Factor-Session. The source account must belong to the authenticated user, and both accounts must use the same currency.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "List Ledger",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/ledger/{{ledger_account_id}}?per_page=25",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "ledger",
+                "{{ledger_account_id}}"
+              ],
+              "query": [
+                {
+                  "key": "per_page",
+                  "value": "25"
+                }
+              ]
+            },
+            "description": "Requires Authorization: Bearer {{access_token}}. The account must belong to the authenticated user.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "Webhooks",
+      "item": [
+        {
+          "name": "Settlement Webhook",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const body = pm.request.body.raw;",
+                  "const secret = pm.collectionVariables.get('settlement_webhook_secret');",
+                  "const signature = CryptoJS.HmacSHA256(body, secret).toString(CryptoJS.enc.Hex);",
+                  "pm.request.headers.upsert({ key: 'X-Tupay-Signature', value: signature });"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tupay-Signature",
+                "value": ""
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_reference\": \"{{provider_reference}}\",\n  \"account_id\": {{cny_account_id}},\n  \"amount_minor\": 12500,\n  \"currency\": \"CNY\",\n  \"status\": \"completed\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/api/webhooks/settlement",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "webhooks",
+                "settlement"
+              ]
+            },
+            "description": "Pre-request script signs the exact raw JSON body with HMAC-SHA256 using settlement_webhook_secret. The value must match SETTLEMENT_WEBHOOK_SECRET.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}
